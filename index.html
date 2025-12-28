@@ -78,6 +78,19 @@
             box-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
         }
 
+        .game-timer {
+            padding: 10px 20px;
+            background: rgba(0, 255, 255, 0.1);
+            border: 2px solid rgba(0, 255, 255, 0.3);
+            color: #00ffff;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: center;
+            min-width: 100px;
+            font-variant-numeric: tabular-nums;
+        }
+
         .reset-btn {
             padding: 10px 25px;
             background: rgba(255, 0, 150, 0.2);
@@ -214,6 +227,50 @@
             text-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
         }
 
+        .win-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .win-text {
+            font-size: 5em;
+            font-weight: bold;
+            color: #00ff00;
+            text-shadow: 
+                0 0 20px rgba(0, 255, 0, 0.8),
+                0 0 40px rgba(0, 255, 0, 0.6),
+                0 0 60px rgba(0, 255, 0, 0.4);
+            animation: winPulse 1s ease-in-out infinite;
+        }
+
+        @keyframes winPulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.1);
+                opacity: 0.9;
+            }
+        }
+
+        .particle {
+            position: fixed;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 999;
+        }
+
         @media (max-width: 600px) {
             .cell {
                 width: 25px;
@@ -246,6 +303,7 @@
                 <button class="difficulty-btn" data-difficulty="medium">Medium</button>
                 <button class="difficulty-btn" data-difficulty="hard">Hard</button>
             </div>
+            <div class="game-timer" id="game-timer">00:00:00</div>
             <button class="reset-btn">Reset</button>
         </div>
 
@@ -259,14 +317,18 @@
                 <div class="stat-value" id="flags-count">0</div>
             </div>
             <div class="stat">
-                <div class="stat-label">Time</div>
-                <div class="stat-value" id="timer">0</div>
+                <div class="stat-label">Wins</div>
+                <div class="stat-value" id="wins-count">0</div>
             </div>
         </div>
 
         <div class="board" id="board"></div>
 
         <div class="message" id="message"></div>
+    </div>
+
+    <div class="win-overlay" id="win-overlay" style="display: none;">
+        <div class="win-text">You Win!</div>
     </div>
 
     <script>
@@ -286,12 +348,19 @@
         let timer = 0;
         let timerInterval = null;
         let flagsPlaced = 0;
+        let wins = {
+            easy: 0,
+            medium: 0,
+            hard: 0
+        };
 
         const boardElement = document.getElementById('board');
         const messageElement = document.getElementById('message');
         const minesCountElement = document.getElementById('mines-count');
         const flagsCountElement = document.getElementById('flags-count');
-        const timerElement = document.getElementById('timer');
+        const winsCountElement = document.getElementById('wins-count');
+        const gameTimerElement = document.getElementById('game-timer');
+        const winOverlayElement = document.getElementById('win-overlay');
         const resetBtn = document.querySelector('.reset-btn');
         const difficultyBtns = document.querySelectorAll('.difficulty-btn');
 
@@ -326,7 +395,9 @@
             updateDisplay();
             messageElement.textContent = '';
             messageElement.className = 'message';
-            timerElement.textContent = '0';
+            gameTimerElement.textContent = '00:00:00';
+            winsCountElement.textContent = wins[currentDifficulty];
+            winOverlayElement.style.display = 'none';
         }
 
         function placeMines(excludeRow, excludeCol) {
@@ -430,6 +501,7 @@
             flagged[row][col] = !flagged[row][col];
             flagsPlaced += flagged[row][col] ? 1 : -1;
             updateDisplay();
+            checkWin();
         }
 
         function revealAllMines() {
@@ -444,13 +516,30 @@
         }
 
         function checkWin() {
+            if (gameWon || gameOver) {
+                return;
+            }
+
             const config = difficulties[currentDifficulty];
             let revealedCount = 0;
+            let flaggedMines = 0;
+            let flaggedNonMines = 0;
+            let unopenedNonFlagged = 0;
 
             for (let i = 0; i < config.rows; i++) {
                 for (let j = 0; j < config.cols; j++) {
                     if (revealed[i][j] && board[i][j] !== -1) {
                         revealedCount++;
+                    }
+                    if (flagged[i][j]) {
+                        if (board[i][j] === -1) {
+                            flaggedMines++;
+                        } else {
+                            flaggedNonMines++;
+                        }
+                    }
+                    if (!revealed[i][j] && !flagged[i][j] && board[i][j] !== -1) {
+                        unopenedNonFlagged++;
                     }
                 }
             }
@@ -458,11 +547,24 @@
             const totalCells = config.rows * config.cols;
             const totalMines = config.mines;
 
-            if (revealedCount === totalCells - totalMines) {
+            // Win condition 1: All non-mines revealed
+            const allNonMinesRevealed = revealedCount === totalCells - totalMines;
+
+            // Win condition 2: All mines flagged, only mines flagged, no unopened non-flagged tiles
+            const allMinesFlagged = flaggedMines === totalMines;
+            const onlyMinesFlagged = flaggedNonMines === 0;
+            const noUnopenedNonFlagged = unopenedNonFlagged === 0;
+            const flagWinCondition = allMinesFlagged && onlyMinesFlagged && noUnopenedNonFlagged;
+
+            if (allNonMinesRevealed || flagWinCondition) {
                 gameWon = true;
                 stopTimer();
+                wins[currentDifficulty]++;
                 messageElement.textContent = '🎉 You Win!';
                 messageElement.className = 'message win';
+                createParticles();
+                winOverlayElement.style.display = 'flex';
+                updateDisplay();
             }
         }
 
@@ -472,6 +574,7 @@
             // Update stats
             minesCountElement.textContent = config.mines;
             flagsCountElement.textContent = flagsPlaced;
+            winsCountElement.textContent = wins[currentDifficulty];
 
             // Update board
             boardElement.style.gridTemplateColumns = `repeat(${config.cols}, 1fr)`;
@@ -509,10 +612,17 @@
             }
         }
 
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
         function startTimer() {
             timerInterval = setInterval(() => {
                 timer++;
-                timerElement.textContent = timer;
+                gameTimerElement.textContent = formatTime(timer);
             }, 1000);
         }
 
@@ -520,6 +630,58 @@
             if (timerInterval) {
                 clearInterval(timerInterval);
                 timerInterval = null;
+            }
+        }
+
+        function createParticles() {
+            const colors = ['#00ff00', '#00ffff', '#ffff00', '#ff0096', '#9900ff', '#ff9900', '#ff0000'];
+            const particleCount = 200;
+
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                particle.style.backgroundColor = color;
+                particle.style.boxShadow = `0 0 10px ${color}, 0 0 20px ${color}`;
+                
+                const startX = Math.random() * window.innerWidth;
+                const startY = Math.random() * window.innerHeight;
+                const angle = Math.random() * Math.PI * 2;
+                const velocity = 2 + Math.random() * 4;
+                const size = 5 + Math.random() * 10;
+                
+                particle.style.left = startX + 'px';
+                particle.style.top = startY + 'px';
+                particle.style.width = size + 'px';
+                particle.style.height = size + 'px';
+                
+                document.body.appendChild(particle);
+                
+                const vx = Math.cos(angle) * velocity;
+                const vy = Math.sin(angle) * velocity;
+                const gravity = 0.1;
+                let x = startX;
+                let y = startY;
+                let opacity = 1;
+                
+                const animate = () => {
+                    x += vx;
+                    y += vy + gravity;
+                    opacity -= 0.01;
+                    
+                    particle.style.left = x + 'px';
+                    particle.style.top = y + 'px';
+                    particle.style.opacity = opacity;
+                    
+                    if (opacity > 0 && y < window.innerHeight + 100) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        particle.remove();
+                    }
+                };
+                
+                requestAnimationFrame(animate);
             }
         }
 
